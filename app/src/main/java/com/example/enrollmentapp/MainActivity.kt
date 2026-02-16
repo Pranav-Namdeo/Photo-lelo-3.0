@@ -11,6 +11,8 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
     
@@ -24,6 +26,7 @@ class MainActivity : AppCompatActivity() {
     private val CAMERA_REQUEST_CODE = 200
     
     private var faceEmbedding: FloatArray? = null
+    private lateinit var apiService: ApiService
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -35,6 +38,9 @@ class MainActivity : AppCompatActivity() {
         takeFacialDataButton = findViewById(R.id.takeFacialDataButton)
         saveButton = findViewById(R.id.saveButton)
         statusText = findViewById(R.id.statusText)
+        
+        // Initialize API service
+        apiService = ApiService(this)
         
         // Set up button listeners
         takeFacialDataButton.setOnClickListener {
@@ -73,8 +79,8 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun handleSave() {
-        val enrollmentNo = enrollmentNoInput.text.toString()
-        val password = passwordInput.text.toString()
+        val enrollmentNo = enrollmentNoInput.text.toString().trim()
+        val password = passwordInput.text.toString().trim()
         
         if (enrollmentNo.isEmpty() || password.isEmpty()) {
             Toast.makeText(this, "Please fill all fields", Toast.LENGTH_SHORT).show()
@@ -86,17 +92,52 @@ class MainActivity : AppCompatActivity() {
             return
         }
         
-        // TODO: Save enrollment data to database or server
-        // Data includes: enrollmentNo, password, faceEmbedding
+        // Show loading
+        statusText.text = "Saving enrollment to server..."
+        saveButton.isEnabled = false
         
-        Toast.makeText(this, "Enrollment saved successfully!", Toast.LENGTH_LONG).show()
-        statusText.text = "Enrollment saved for: $enrollmentNo"
-        
-        // Clear form
-        enrollmentNoInput.text.clear()
-        passwordInput.text.clear()
-        faceEmbedding = null
-        statusText.text = "Ready to capture"
+        // Save to server
+        lifecycleScope.launch {
+            try {
+                val response = apiService.createEnrollment(
+                    enrollmentNo = enrollmentNo,
+                    password = password,
+                    faceEmbedding = faceEmbedding!!
+                )
+                
+                if (response.success) {
+                    Toast.makeText(
+                        this@MainActivity, 
+                        "Enrollment saved successfully!", 
+                        Toast.LENGTH_LONG
+                    ).show()
+                    statusText.text = "Enrollment saved for: $enrollmentNo"
+                    
+                    // Clear form
+                    enrollmentNoInput.text.clear()
+                    passwordInput.text.clear()
+                    faceEmbedding = null
+                    statusText.text = "Ready to capture"
+                } else {
+                    Toast.makeText(
+                        this@MainActivity, 
+                        "Error: ${response.message}", 
+                        Toast.LENGTH_LONG
+                    ).show()
+                    statusText.text = "Error: ${response.message}"
+                }
+                
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@MainActivity, 
+                    "Network error: ${e.message}", 
+                    Toast.LENGTH_LONG
+                ).show()
+                statusText.text = "Network error occurred"
+            } finally {
+                saveButton.isEnabled = true
+            }
+        }
     }
     
     private fun checkCameraPermission(): Boolean {
