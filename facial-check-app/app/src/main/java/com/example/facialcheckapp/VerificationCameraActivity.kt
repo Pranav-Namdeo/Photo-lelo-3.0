@@ -20,14 +20,17 @@ class VerificationCameraActivity : AppCompatActivity() {
     private lateinit var previewView: PreviewView
     private lateinit var statusText: TextView
     private lateinit var progressText: TextView
+    private lateinit var livenessStatus: TextView
     
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var faceDetectionHelper: FaceDetectionHelper
     private lateinit var faceEmbeddingHelper: FaceEmbeddingHelper
+    private lateinit var livenessDetector: LivenessDetector
     
     private val capturedEmbeddings = mutableListOf<FloatArray>()
     private val maxFrames = 10
     private var isProcessing = false
+    private var livenessVerified = false
     private var frameCount = 0
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,6 +40,7 @@ class VerificationCameraActivity : AppCompatActivity() {
         previewView = findViewById(R.id.previewView)
         statusText = findViewById(R.id.statusText)
         progressText = findViewById(R.id.progressText)
+        livenessStatus = findViewById(R.id.livenessStatus)
         
         cameraExecutor = Executors.newSingleThreadExecutor()
         
@@ -51,6 +55,7 @@ class VerificationCameraActivity : AppCompatActivity() {
         )
         
         faceEmbeddingHelper = FaceEmbeddingHelper(this)
+        livenessDetector = LivenessDetector()
         
         startCamera()
     }
@@ -107,31 +112,55 @@ class VerificationCameraActivity : AppCompatActivity() {
             val detection = detectionResult.detections()[0]
             val boundingBox = detection.boundingBox()
             
-            // Crop face region
-            val faceBitmap = cropFace(rotatedBitmap, boundingBox)
-            
-            // Extract embedding
-            val embedding = faceEmbeddingHelper.extractEmbedding(faceBitmap)
-            
-            if (embedding != null) {
-                capturedEmbeddings.add(embedding)
+            // Perform liveness detection
+            if (!livenessVerified) {
+                val livenessResult = livenessDetector.analyzeLiveness(detectionResult, rotatedBitmap)
                 
                 runOnUiThread {
-                    progressText.text = "Frames: ${capturedEmbeddings.size}/$maxFrames"
-                    statusText.text = "Capturing... Keep your face steady"
+                    statusText.text = livenessResult.message
+                    livenessStatus.text = "Liveness: ${livenessDetector.getProgress()}"
+                    livenessStatus.setTextColor(
+                        if (livenessResult.isLive) 0xFF4CAF50.toInt() else 0xFFFFEB3B.toInt()
+                    )
                 }
                 
-                if (capturedEmbeddings.size >= maxFrames) {
-                    finishCapture()
+                if (livenessResult.isLive) {
+                    livenessVerified = true
+                    runOnUiThread {
+                        statusText.text = "Liveness verified! Capturing facial data..."
+                        livenessStatus.text = "Liveness: ✓ Verified"
+                        livenessStatus.setTextColor(0xFF4CAF50.toInt())
+                        progressText.text = "Frames: 0/$maxFrames"
+                    }
                 }
             } else {
-                runOnUiThread {
-                    statusText.text = "Processing face..."
+                // Liveness verified, now capture embeddings
+                val faceBitmap = cropFace(rotatedBitmap, boundingBox)
+                val embedding = faceEmbeddingHelper.extractEmbedding(faceBitmap)
+                
+                if (embedding != null) {
+                    capturedEmbeddings.add(embedding)
+                    
+                    runOnUiThread {
+                        progressText.text = "Frames: ${capturedEmbeddings.size}/$maxFrames"
+                        statusText.text = "Capturing... Keep your face steady"
+                    }
+                    
+                    if (capturedEmbeddings.size >= maxFrames) {
+                        finishCapture()
+                    }
+                } else {
+                    runOnUiThread {
+                        statusText.text = "Processing face..."
+                    }
                 }
             }
         } else {
             runOnUiThread {
                 statusText.text = "No face detected. Position your face in frame"
+                if (!livenessVerified) {
+                    livenessStatus.text = "Liveness: Waiting for face..."
+                }
             }
         }
         
